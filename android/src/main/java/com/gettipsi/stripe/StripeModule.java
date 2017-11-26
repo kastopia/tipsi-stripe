@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.util.Log;
+import android.text.TextUtils;
 
 import com.facebook.react.bridge.ActivityEventListener;
 import com.facebook.react.bridge.Arguments;
@@ -43,6 +44,7 @@ import com.stripe.android.model.Card;
 import com.stripe.android.model.Token;
 import com.stripe.android.net.StripeApiHandler;
 import com.stripe.android.net.TokenParser;
+import com.google.android.gms.identity.intents.model.UserAddress;
 
 import org.json.JSONException;
 
@@ -92,7 +94,11 @@ public class StripeModule extends ReactContextBaseJavaModule {
             String tokenJSON = fullWallet.getPaymentMethodToken().getToken();
             try {
               Token token = TokenParser.parseToken(tokenJSON);
-              payPromise.resolve(convertTokenToWritableMap(token));
+              WritableMap result = convertTokenToWritableMap(token);
+              if (fullWallet != null) {
+                result.putMap("shippingAddress", convertAddressToWritableMap(fullWallet.getBuyerShippingAddress()));
+              }
+              payPromise.resolve(result);
             } catch (JSONException jsonException) {
               // Log the error and notify Stripe helpß
               Log.e(TAG, "onActivityResult: ", jsonException);
@@ -500,6 +506,48 @@ public class StripeModule extends ReactContextBaseJavaModule {
     return result;
   }
 
+  private WritableMap convertAddressToWritableMap(final UserAddress address){
+    WritableMap result = Arguments.createMap();
+
+    if(address == null) return result;
+
+    putIfExist(result, "address1", address.getAddress1());
+    putIfExist(result, "address2", address.getAddress2());
+    putIfExist(result, "address3", address.getAddress3());
+    putIfExist(result, "address4", address.getAddress4());
+    putIfExist(result, "address5", address.getAddress5());
+    putIfExist(result, "administrativeArea", address.getAdministrativeArea());
+    putIfExist(result, "companyName", address.getCompanyName());
+    putIfExist(result, "countryCode", address.getCountryCode());
+    putIfExist(result, "locality", address.getLocality());
+    putIfExist(result, "name", address.getName());
+    putIfExist(result, "phoneNumber", address.getPhoneNumber());
+    putIfExist(result, "postalCode", address.getPostalCode());
+    putIfExist(result, "sortingCode", address.getSortingCode());
+
+    putIfExist(result, "formattedAddress", formatUsAddress(address));
+    return result;
+  }
+
+  private static String formatUsAddress(UserAddress address) {
+    StringBuilder builder = new StringBuilder();
+    builder.append("\n");
+    if (appendIfValid(address.getAddress1(), builder)) builder.append(", ");
+    if (appendIfValid(address.getLocality(), builder)) builder.append(", ");
+    if (appendIfValid(address.getAdministrativeArea(), builder)) builder.append(", ");
+    appendIfValid(address.getCountryCode(), builder);
+    return builder.toString();
+  }
+
+  private static boolean appendIfValid(String string, StringBuilder builder) {
+    if (string != null && string.length() > 0) {
+      builder.append(string);
+      return true;
+    }
+    return false;
+  }
+
+
   private BankAccount createBankAccount(ReadableMap accountData) {
     BankAccount account = new BankAccount(
       // required fields only
@@ -520,6 +568,12 @@ public class StripeModule extends ReactContextBaseJavaModule {
     } else {
       // If map don't have some key - we must pass to constructor default value.
       return def;
+    }
+  }
+
+  private void putIfExist(final WritableMap map, final String key, final String value) {
+    if (!TextUtils.isEmpty(value)) {
+      map.putString(key, value);
     }
   }
 
