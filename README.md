@@ -535,6 +535,44 @@ const token = await stripe.paymentRequestWithAndroidPay(options)
 // api.sendTokenToBackend(token)
 ```
 
+### Pay With Google (Android only)
+(Under active development)
+payment using new [google payment api](https://developers.google.com/payments/setup) that will supersede Android pay.
+
+#### `deviceSupportsPayWithGoogle() -> Promise`
+
+Indicates whether or not the device supports Pay With Google. Returns a `Boolean` value.
+
+#### `paymentRequestWithPayWithGoogle(options) -> Promise`
+
+Launch the `Pay With Google` view to accept payment. 
+It will aggregate data from Android Pay and all credit cards from available google accounts.
+
+##### `options`
+
+An object with the following keys:
+
+* `price` _String_ (Required) - Total price of the item. The price provided to the API should include taxes and shipping.
+* `phoneNumberRequired` _Bool_ - Should we ask user for phone number.
+* `emailRequired` _Bool_ - Should we ask user for email.
+* `shippingAddressRequired` _Bool_ - Should we ask user for shipping address.
+
+#### Example
+
+```js
+const options = {
+  price: '100.00',
+  phoneNumberRequired: false,
+  emailRequired: false,
+  shippingAddressRequired: false,
+}
+  
+const token = await stripe.paymentRequestWithPayWithGoogle(options)
+
+// Client specific code
+// api.sendTokenToBackend(token)
+```
+
 ### Request with Card Form
 
 #### `paymentRequestWithCardForm(options) -> Promise`

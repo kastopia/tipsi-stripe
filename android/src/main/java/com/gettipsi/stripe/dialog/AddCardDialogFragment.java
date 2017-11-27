@@ -27,7 +27,7 @@ import com.stripe.android.Stripe;
 import com.stripe.android.TokenCallback;
 import com.stripe.android.model.Card;
 import com.stripe.android.model.Token;
-
+import com.gettipsi.stripe.StripeModule;
 
 /**
  * Created by dmitriy on 11/13/16
@@ -169,7 +169,7 @@ public class AddCardDialogFragment extends DialogFragment {
 
     String errorMessage = Utils.validateCard(card);
     if (errorMessage == null) {
-      new Stripe().createToken(
+      StripeModule.getInstance().getStripe().createToken(
         card,
         PUBLISHABLE_KEY,
         new TokenCallback() {

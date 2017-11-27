@@ -25,7 +25,12 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.BooleanResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.Status;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.android.gms.wallet.Cart;
+import com.google.android.gms.wallet.CardInfo;
 import com.google.android.gms.wallet.FullWallet;
 import com.google.android.gms.wallet.FullWalletRequest;
 import com.google.android.gms.wallet.IsReadyToPayRequest;
@@ -36,21 +41,27 @@ import com.google.android.gms.wallet.PaymentMethodTokenizationParameters;
 import com.google.android.gms.wallet.PaymentMethodTokenizationType;
 import com.google.android.gms.wallet.Wallet;
 import com.google.android.gms.wallet.WalletConstants;
+import com.google.android.gms.wallet.TransactionInfo;
+import com.google.android.gms.wallet.AutoResolveHelper;
+import com.google.android.gms.wallet.PaymentData;
+import com.google.android.gms.wallet.PaymentDataRequest;
+import com.google.android.gms.wallet.PaymentsClient;
+import com.google.android.gms.wallet.TransactionInfo;
+
 import com.stripe.android.Stripe;
 import com.stripe.android.TokenCallback;
 import com.stripe.android.exception.AuthenticationException;
 import com.stripe.android.model.BankAccount;
 import com.stripe.android.model.Card;
 import com.stripe.android.model.Token;
-import com.stripe.android.net.StripeApiHandler;
-import com.stripe.android.net.TokenParser;
 import com.google.android.gms.identity.intents.model.UserAddress;
+
+import com.gettipsi.stripe.util.GooglePaymentsUtil;
+import com.gettipsi.stripe.util.GooglePayment;
 
 import org.json.JSONException;
 
 public class StripeModule extends ReactContextBaseJavaModule {
-
-
   private static final String TAG = StripeModule.class.getSimpleName();
   private static final String MODULE_NAME = "StripeModule";
 
@@ -69,9 +80,14 @@ public class StripeModule extends ReactContextBaseJavaModule {
   private static final String LINE_ITEMS = "line_items";
   private static final String QUANTITY = "quantity";
   private static final String DESCRIPTION = "description";
+  // Arbitrarily-picked result code.
+  private static final int LOAD_GOOGLE_PAYMENT_DATA_REQUEST_CODE = 991;
 
   private int mEnvironment = WalletConstants.ENVIRONMENT_PRODUCTION;
   private Promise payPromise;
+  private Promise payWithGooglePromise;
+  //payWithGoogle
+  private PaymentsClient paymentsClient;
 
   private String publicKey;
   private Stripe stripe;
@@ -79,33 +95,70 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
   private ReadableMap androidPayParams;
 
+  private static StripeModule instance = null;
+
+  public static StripeModule getInstance() {
+    return instance;
+  }
+
+  public Stripe getStripe() {
+    return stripe;
+  }
+
   private final ActivityEventListener mActivityEventListener = new BaseActivityEventListener() {
-
-    @Override
+  @Override
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
-      if (payPromise != null) {
-        if (requestCode == LOAD_MASKED_WALLET_REQUEST_CODE) { // Unique, identifying constant
-
-          handleLoadMascedWaletRequest(resultCode, data);
-
-        } else if (requestCode == LOAD_FULL_WALLET_REQUEST_CODE) {
-          if (resultCode == Activity.RESULT_OK) {
-            FullWallet fullWallet = data.getParcelableExtra(WalletConstants.EXTRA_FULL_WALLET);
-            String tokenJSON = fullWallet.getPaymentMethodToken().getToken();
-            try {
-              Token token = TokenParser.parseToken(tokenJSON);
-              WritableMap result = convertTokenToWritableMap(token);
-              if (fullWallet != null) {
-                result.putMap("shippingAddress", convertAddressToWritableMap(fullWallet.getBuyerShippingAddress()));
+      if (payPromise != null || payWithGooglePromise != null) {
+        switch (requestCode) {
+          case LOAD_MASKED_WALLET_REQUEST_CODE:
+            handleLoadMascedWaletRequest(resultCode, data);
+            break;
+          case LOAD_FULL_WALLET_REQUEST_CODE:
+            if (resultCode == Activity.RESULT_OK) {
+              FullWallet fullWallet = data.getParcelableExtra(WalletConstants.EXTRA_FULL_WALLET);
+              String tokenJSON = fullWallet.getPaymentMethodToken().getToken();
+              Token token = Token.fromString(tokenJSON);
+              if (token == null) {
+                Log.e(TAG, "onActivityResult: failed to create token from JSON string.");
+                payPromise.reject("JsonParsingError", "Failed to create token from JSON string.");
+              } else {
+                WritableMap result = convertTokenToWritableMap(token);
+                if (fullWallet != null) {
+                  result.putMap("shippingAddress", convertAddressToWritableMap(fullWallet.getBuyerShippingAddress()));
+                }
+                payPromise.resolve(result);
               }
-              payPromise.resolve(result);
-            } catch (JSONException jsonException) {
-              // Log the error and notify Stripe helpß
-              Log.e(TAG, "onActivityResult: ", jsonException);
             }
-          }
-        } else {
-          super.onActivityResult(activity, requestCode, resultCode, data);
+            break;
+          case LOAD_GOOGLE_PAYMENT_DATA_REQUEST_CODE:
+            switch (resultCode) {
+              case Activity.RESULT_OK:
+                PaymentData paymentData = PaymentData.getFromIntent(data);
+                CardInfo info = paymentData.getCardInfo();
+                UserAddress shippingAddress = paymentData.getShippingAddress();
+                String rawToken = paymentData.getPaymentMethodToken().getToken();
+                Token stripeToken = Token.fromString(rawToken);
+                if (stripeToken != null && payWithGooglePromise != null) {
+                  WritableMap result = convertTokenToWritableMap(stripeToken);
+                  result.putMap("shippingAddress", convertAddressToWritableMap(shippingAddress));
+                  if(paymentData.getCardInfo() != null){
+                    result.putMap("billingAddress", convertAddressToWritableMap(paymentData.getCardInfo().getBillingAddress()));
+                  }
+                  payWithGooglePromise.resolve(result);
+                }
+                break;
+              case Activity.RESULT_CANCELED:
+                break;
+              case AutoResolveHelper.RESULT_ERROR:
+                // rejecting promise and send error data
+                Status status = AutoResolveHelper.getStatusFromIntent(data);
+                if(payWithGooglePromise != null){
+                  payWithGooglePromise.resolve(status.getStatusCode());
+                }
+                break;
+            }
+          default:
+            super.onActivityResult(activity, requestCode, resultCode, data);
         }
       }
     }
@@ -132,12 +185,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
     }
 
     publicKey = options.getString("publishableKey");
-
-    try {
-      stripe = new Stripe(publicKey);
-    } catch (AuthenticationException e) {
-      Log.e(TAG, "init: ", e);
-    }
+    stripe = new Stripe(getReactApplicationContext(), publicKey);
   }
 
   @ReactMethod
@@ -195,9 +243,49 @@ public class StripeModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
+  public void deviceSupportsPayWithGoogle(final Promise promise) {
+    if (!isPlayServicesAvailable()) {
+      promise.reject(TAG, "Play services are not available!");
+      return;
+    }
+
+    //Should place paymentsClient higher?
+    paymentsClient = GooglePaymentsUtil.createPaymentsClient(getCurrentActivity());
+    GooglePaymentsUtil.isReadyToPay(paymentsClient).addOnCompleteListener(
+      new OnCompleteListener<Boolean>() {
+        public void onComplete(Task<Boolean> task) {
+          try {
+            boolean result = task.getResult(ApiException.class);
+            if(result){
+              promise.resolve(true);
+            }
+          } catch (ApiException exception) {
+            promise.reject(TAG, "isReadyToPay failed: " + exception.getMessage());
+          }
+        }
+      }
+    );
+  }
+
+  @ReactMethod
+  public void paymentRequestWithPayWithGoogle(final ReadableMap paymentData, final Promise promise) {
+    PaymentDataRequest request = GooglePaymentsUtil.createPaymentDataRequest(createGooglePayment(paymentData));
+    if(paymentsClient == null){
+      paymentsClient = GooglePaymentsUtil.createPaymentsClient(getCurrentActivity());
+    }
+
+    if (request != null) {
+      payWithGooglePromise = promise;
+      AutoResolveHelper.resolveTask(
+        paymentsClient.loadPaymentData(request),
+        getCurrentActivity(),
+        LOAD_GOOGLE_PAYMENT_DATA_REQUEST_CODE);
+    }
+  }
+
+  @ReactMethod
   public void createTokenWithCard(final ReadableMap cardData, final Promise promise) {
     try {
-
       stripe.createToken(createCard(cardData),
         publicKey,
         new TokenCallback() {
@@ -307,7 +395,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
         .setPaymentMethodTokenizationType(PaymentMethodTokenizationType.PAYMENT_GATEWAY)
         .addParameter("gateway", "stripe")
         .addParameter("stripe:publishableKey", publicKey)
-        .addParameter("stripe:version", StripeApiHandler.VERSION)
+        .addParameter("stripe:version", BuildConfig.VERSION_NAME)
         .build())
       // You want the shipping address:
       .setShippingAddressRequired(shippingAddressRequired)
@@ -369,7 +457,11 @@ public class StripeModule extends ReactContextBaseJavaModule {
   }
 
   private IsReadyToPayRequest doIsReadyToPayRequest() {
-    return IsReadyToPayRequest.newBuilder().build();
+    IsReadyToPayRequest request = IsReadyToPayRequest.newBuilder()
+      .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_CARD)
+      .addAllowedPaymentMethod(WalletConstants.PAYMENT_METHOD_TOKENIZED_CARD)
+      .build();
+    return request;
   }
 
   private void checkAndroidPayAvaliable(final GoogleApiClient client, final Promise promise) {
@@ -438,7 +530,8 @@ public class StripeModule extends ReactContextBaseJavaModule {
       exist(cardData, "fingerprint"),
       exist(cardData, "funding"),
       exist(cardData, "country"),
-      exist(cardData, "currency")
+      exist(cardData, "currency"),
+      exist(cardData, "id")
     );
   }
 
@@ -560,6 +653,18 @@ public class StripeModule extends ReactContextBaseJavaModule {
     account.setAccountHolderType(exist(accountData, "accountHolderType"));
 
     return account;
+  }
+
+  private GooglePayment createGooglePayment(ReadableMap paymentData) {
+    GooglePayment payment = new GooglePayment(
+      GooglePaymentsUtil.createTransaction(paymentData.getString("price")),
+      GooglePaymentsUtil.createTokenizationParameters(publicKey),
+      GooglePaymentsUtil.createCardRequirements(),
+      exist(paymentData, "phoneNumberRequired", false),
+      exist(paymentData, "emailRequired", true),
+      exist(paymentData, "shippingAddressRequired", true)
+    );
+    return payment;
   }
 
   private String exist(final ReadableMap map, final String key, final String def) {
