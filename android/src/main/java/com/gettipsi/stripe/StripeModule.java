@@ -97,6 +97,8 @@ public class StripeModule extends ReactContextBaseJavaModule {
               WritableMap result = convertTokenToWritableMap(token);
               if (fullWallet != null) {
                 result.putMap("shippingAddress", convertAddressToWritableMap(fullWallet.getBuyerShippingAddress()));
+                result.putMap("billingAddress", convertAddressToWritableMap(fullWallet.getBuyerBillingAddress()));
+                putIfExist(result, "email", fullWallet.getEmail());
               }
               payPromise.resolve(result);
             } catch (JSONException jsonException) {
