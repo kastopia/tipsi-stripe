@@ -29,7 +29,7 @@ public class MainActivity extends ReactActivity {
   }
 
   public void askPermission() {
-    if (!Settings.canDrawOverlays(this) && Build.VERSION.SDK_INT>Build.VERSION_CODES.LOLLIPOP_MR1) {
+    if (Build.VERSION.SDK_INT>Build.VERSION_CODES.LOLLIPOP_MR1 && !Settings.canDrawOverlays(this)) {
       Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
       startActivityForResult(intent, OVERLAY_PERMISSION_REQ_CODE);
     }
