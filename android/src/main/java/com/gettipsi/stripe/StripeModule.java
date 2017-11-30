@@ -527,28 +527,8 @@ public class StripeModule extends ReactContextBaseJavaModule {
     putIfExist(result, "postalCode", address.getPostalCode());
     putIfExist(result, "sortingCode", address.getSortingCode());
 
-    putIfExist(result, "formattedAddress", formatUsAddress(address));
     return result;
   }
-
-  private static String formatUsAddress(UserAddress address) {
-    StringBuilder builder = new StringBuilder();
-    builder.append("\n");
-    if (appendIfValid(address.getAddress1(), builder)) builder.append(", ");
-    if (appendIfValid(address.getLocality(), builder)) builder.append(", ");
-    if (appendIfValid(address.getAdministrativeArea(), builder)) builder.append(", ");
-    appendIfValid(address.getCountryCode(), builder);
-    return builder.toString();
-  }
-
-  private static boolean appendIfValid(String string, StringBuilder builder) {
-    if (string != null && string.length() > 0) {
-      builder.append(string);
-      return true;
-    }
-    return false;
-  }
-
 
   private BankAccount createBankAccount(ReadableMap accountData) {
     BankAccount account = new BankAccount(
